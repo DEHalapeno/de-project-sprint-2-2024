@@ -1,0 +1,105 @@
+/*
+В качестве дополнительного решения, возможно создание новой схемы DM (Data Mart), в которую могли бы помещаться все производные витрины и/или представления с последующим
+разграничением доступа на просмотр/редактирование объектов. 
+Например, если говорим о продуктивной базе, то администратор базы имеет полный доступ на все схемы, разработчик и аналитики имеют доступ только на просмотр. 
+В тестовой базе, администратор и разработчики имеют полный доступ на объекты, аналитики только просмотр 
+*/
+
+--Основная витрина
+drop table if exists dwh.customer_report_datamart 
+;
+
+create table dwh.customer_report_datamart 
+(
+	id bigint not null generated always as identity( increment by 1 minvalue 1 maxvalue 9223372036854775807 start 1 cache 1 no cycle),
+	customer_id bigint not null, 
+	customer_name varchar not null,
+	customer_address varchar not null,
+	customer_birthday date not null,
+	customer_email varchar not null,
+	customer_money numeric(15, 2) not null,
+	platform_money numeric(15, 2) not null,
+	count_order bigint not null,
+	avg_price_order numeric(10, 2) not null,
+	median_time_order_completed numeric(10, 1) null,
+	top_product_category varchar not null,
+	top_craftsman bigint not null,
+	count_order_created bigint not null,
+	count_order_in_progress bigint not null,
+	count_order_delivery bigint not null,
+	count_order_done bigint not null,
+	count_order_not_done bigint not null,
+	report_period varchar not null,
+	constraint customer_report_datamart_pk primary key (id)
+)
+;
+
+-- table comments
+
+comment on table dwh.customer_report_datamart IS 'Витрина с отображением информации о покупателях/закзчиках'
+;
+
+-- Column comments
+
+comment on column dwh.customer_report_datamart.id is 'идентификатор записи'
+;
+comment on column dwh.customer_report_datamart.customer_id is 'идентификатор заказчика'
+;
+comment on column dwh.customer_report_datamart.customer_name is 'ф. и. о. заказчика'
+;
+comment on column dwh.customer_report_datamart.customer_address is 'адрес заказчика'
+;
+comment on column dwh.customer_report_datamart.customer_birthday is 'дата рождения заказчика'
+;
+comment on column dwh.customer_report_datamart.customer_email is 'электронная почта заказчика'
+;
+comment on column dwh.customer_report_datamart.customer_money is 'сумма, которую потратил заказчик'
+;
+comment on column dwh.customer_report_datamart.platform_money is 'сумма, которую заработала платформа от покупок заказчика за месяц (10% от суммы, которую потратил заказчик)'
+;
+comment on column dwh.customer_report_datamart.count_order is 'количество заказов у заказчика за месяц'
+;
+comment on column dwh.customer_report_datamart.avg_price_order is 'средняя стоимость одного заказа у заказчика за месяц'
+;
+comment on column dwh.customer_report_datamart.median_time_order_completed is 'медианное время в днях от момента создания заказа до его завершения за месяц'
+;
+comment on column dwh.customer_report_datamart.top_product_category is 'самая популярная категория товаров у этого заказчика за месяц'
+;
+comment on column dwh.customer_report_datamart.top_craftsman is 'идентификатор самого популярного мастера ручной работы у заказчика. если заказчик сделал одинаковое количество заказов у нескольких мастеров, возьмите любого'
+;
+comment on column dwh.customer_report_datamart.count_order_created is 'количество созданных заказов за месяц'
+;
+comment on column dwh.customer_report_datamart.count_order_in_progress is 'количество заказов в процессе изготовки за месяц'
+;
+comment on column dwh.customer_report_datamart.count_order_delivery is 'количество заказов в доставке за месяц'
+;
+comment on column dwh.customer_report_datamart.count_order_done is 'количество завершённых заказов за месяц'
+;
+comment on column dwh.customer_report_datamart.count_order_not_done is 'количество незавершённых заказов за месяц'
+;
+comment on column dwh.customer_report_datamart.report_period is 'отчётный период, год и месяц'
+;
+
+
+--Дополнительная таблица с датой загрузки
+drop table if exists dwh.load_dates_customer_report_datamart
+;
+
+create table if not exists dwh.load_dates_customer_report_datamart 
+(
+	id bigint not null generated always as identity( increment by 1 minvalue 1 maxvalue 9223372036854775807 start 1 cache 1 no cycle),
+load_dttm date not null,
+constraint load_dates_customer_report_datamart_pk primary key (id)
+)
+;
+
+-- table comments
+comment on table dwh.load_dates_customer_report_datamart is 'таблица с датой для инкрементальной загрузки в витрину customer_report_datamart в схеме dwh'
+;
+
+-- column comments
+
+comment on column dwh.load_dates_customer_report_datamart.id is 'идентификатор записи'
+;
+comment on column dwh.load_dates_customer_report_datamart.load_dttm is 'дата загрузки'
+;
