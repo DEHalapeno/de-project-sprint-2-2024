@@ -1,0 +1,761 @@
+DROP TABLE IF EXISTS tmp_sources
+;
+
+CREATE TEMP TABLE tmp_sources AS 
+
+SELECT
+	cmw.order_id,
+	cmw.order_created_date,
+	cmw.order_completion_date,
+	cmw.order_status,
+	cmw.craftsman_id,
+	cmw.craftsman_name,
+	cmw.craftsman_address,
+	cmw.craftsman_birthday,	
+	cmw.craftsman_email,
+	cmw.product_id,
+	cmw.product_name,
+	cmw.product_description,
+	cmw.product_type,
+	cmw.product_price,
+	cmw.customer_id,
+	cmw.customer_name,
+	cmw.customer_address,
+	cmw.customer_birthday,
+	cmw.customer_email
+
+	FROM
+	source1.craft_market_wide cmw --широкая таблица первого источника
+
+	UNION ALL
+
+--source2	
+SELECT
+	cmoc.order_id,
+	cmoc.order_created_date,
+	cmoc.order_completion_date, 
+	cmoc.order_status,
+	ss.craftsman_id,
+	ss.craftsman_name,
+	ss.craftsman_address,
+	ss.craftsman_birthday,	
+	ss.craftsman_email,
+	ss.product_id,
+	ss.product_name,
+	ss.product_description,
+	ss.product_type,
+	ss.product_price,
+	cmoc.customer_id,
+	cmoc.customer_name,
+	cmoc.customer_address,
+	cmoc.customer_birthday,
+	cmoc.customer_email
+
+	FROM
+	source2.craft_market_orders_customers cmoc --ненормализованная таблица мастеров
+
+INNER JOIN source2.craft_market_masters_products ss --ненормализованная таблица мастеров
+ON cmoc.craftsman_id = ss.craftsman_id
+AND cmoc.product_id = ss.craftsman_id 
+    
+UNION ALL
+
+--source3
+SELECT
+	cmo.order_id,
+	cmo.order_created_date,
+	cmo.order_completion_date, 
+	cmo.order_status,
+	cmo.craftsman_id,
+	zz.craftsman_name,
+	zz.craftsman_address,
+	zz.craftsman_birthday,	
+	zz.craftsman_email,
+	cmo.product_id,
+	cmo.product_name,
+	cmo.product_description,
+	cmo.product_type,
+	cmo.product_price,
+	cc.customer_id,
+	cc.customer_name,
+	cc.customer_address,
+	cc.customer_birthday,
+	cc.customer_email
+
+	FROM
+	source3.craft_market_orders cmo --таблица заказов с товарами
+
+	INNER JOIN source3.craft_market_craftsmans zz --таблица мастеров
+	ON 	cmo.craftsman_id = zz.craftsman_id
+
+	INNER JOIN source3.craft_market_customers cc --таблица заказчиков
+	ON cmo.customer_id = cc.customer_id
+	
+	UNION ALL 
+	
+	--новый источник external_source
+	SELECT
+	cpo.order_id,
+	cpo.order_created_date,
+	cpo.order_completion_date, 
+	cpo.order_status,
+	cpo.craftsman_id,
+	cpo.craftsman_name,
+	cpo.craftsman_address,
+	cpo.craftsman_birthday,	
+	cpo.craftsman_email,
+	cpo.product_id,
+	cpo.product_name,
+	cpo.product_description,
+	cpo.product_type,
+	cpo.product_price,
+	c.customer_id,
+	c.customer_name,
+	c.customer_address,
+	c.customer_birthday,
+	c.customer_email
+
+FROM
+external_source.craft_products_orders cpo --данные по мастерам, товарам и заказам
+
+INNER JOIN external_source.customers c  --данные по заказчикам
+ON cpo.customer_id = c.customer_id
+	;
+	
+--Обновление существующих записей и добавление новых в dwh.d_craftsmans 
+MERGE INTO dwh.d_craftsman d
+
+USING 
+(
+SELECT
+DISTINCT craftsman_name,
+craftsman_address,
+craftsman_birthday,
+craftsman_email
+
+FROM
+tmp_sources --получение данных из таблицы, созданной на предыдущем этапе
+) t
+
+ON d.craftsman_name = t.craftsman_name
+AND d.craftsman_email = t.craftsman_email
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE 
+craftsman_address = t.craftsman_address, 
+craftsman_birthday = t.craftsman_birthday,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+craftsman_name,
+craftsman_address,
+craftsman_birthday,
+craftsman_email,
+load_dttm
+)
+
+VALUES --INSERT по следующим полям
+(
+t.craftsman_name,
+t.craftsman_address,
+t.craftsman_birthday,
+t.craftsman_email,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+--обновление существующих записей и добавление новых в dwh.d_products 
+MERGE INTO dwh.d_product d
+
+USING 
+(
+SELECT
+DISTINCT product_name,
+product_description,
+product_type,
+product_price
+
+FROM
+tmp_sources
+) t
+
+ON d.product_name = t.product_name
+AND d.product_description = t.product_description
+AND d.product_price = t.product_price
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE 
+product_type = t.product_type,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления, при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+product_name,
+product_description,
+product_type,
+product_price,
+load_dttm
+)
+
+VALUES --INSERT по следующим полям
+(
+t.product_name,
+t.product_description,
+t.product_type,
+t.product_price,
+current_timestamp --для сохранения историчности и корректного обновления, при INSERT проставляется текущая системная дата
+)
+;
+
+--обновление существующих записей и добавление новых в dwh.d_customer 
+MERGE INTO dwh.d_customer d
+
+USING 
+(
+SELECT
+DISTINCT customer_name,
+customer_address,
+customer_birthday,
+customer_email
+
+FROM
+tmp_sources
+) t
+
+ON d.customer_name = t.customer_name
+AND d.customer_email = t.customer_email
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE
+customer_address = t.customer_address, 
+customer_birthday = t.customer_birthday,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+customer_name,
+customer_address,
+customer_birthday,
+customer_email,
+load_dttm
+)
+
+VALUES 
+(
+t.customer_name,
+t.customer_address,
+t.customer_birthday,
+t.customer_email,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+DROP TABLE IF EXISTS tmp_sources_fact
+;
+
+CREATE TEMP TABLE tmp_sources_fact AS 
+
+SELECT
+dp.product_id,
+		dc.craftsman_id,
+		dcust.customer_id,
+		src.order_created_date,
+		src.order_completion_date,
+		src.order_status,
+		current_timestamp AS load_dttm
+
+		FROM
+tmp_sources src
+
+INNER JOIN dwh.d_craftsman dc 
+ON dc.craftsman_name = src.craftsman_name
+AND dc.craftsman_email = src.craftsman_email
+
+INNER JOIN dwh.d_customer dcust 
+ON dcust.customer_name = src.customer_name
+AND dcust.customer_email = src.customer_email
+
+INNER JOIN dwh.d_product dp 
+ON dp.product_name = src.product_name
+AND dp.product_description = src.product_description
+AND dp.product_price = src.product_price
+;
+
+--вставка и/или обновление данных в таблице dwh.f_order
+MERGE INTO dwh.f_order f
+
+USING tmp_sources_fact t
+
+ON f.product_id = t.product_id
+AND f.craftsman_id = t.craftsman_id
+AND f.customer_id = t.customer_id
+AND f.order_created_date = t.order_created_date
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE
+order_completion_date = t.order_completion_date,
+order_status = t.order_status,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+product_id,
+craftsman_id,
+customer_id,
+order_created_date,
+order_completion_date,
+order_status,
+load_dttm
+)
+
+VALUES 
+(
+t.product_id,
+t.craftsman_id,
+t.customer_id,
+t.order_created_date,
+t.order_completion_date,
+t.order_status,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+
+--------------Немного видоизмененное решение
+/*
+ Могу предположить, что, если данная последовательность операций должна проводится постоянно, до закрытия сайта, можно создать постоянные таблицы, но с очисктой. Такие объекты 
+ будут иметь приставку "tmp_". Таблицы не хранят историческую информацию на постоянной основе, а используются только при вставке и/или обновлении данных в целевых таблицах.
+ Фактическая разница, в уходе от конструкции "CREATE TEMP TABLE" к "TRUNCATE TABLE". На мой взгляд, более простой вариант
+*/
+
+--создание таблицы, в которой содержится инфорация по заказу/покупателю/исполнителю. Данная операция производится один раз. В дальнейшем этот этап пропускается и начинается с очистки
+DROP TABLE IF EXISTS dwh.tmp_sources
+;
+
+CREATE TABLE dwh.tmp_sources 
+(
+	order_id int8 NOT NULL,
+	order_created_date date NOT NULL,
+	order_completion_date date NULL,
+	order_status varchar NOT NULL,
+	craftsman_id int8 NOT NULL,
+	craftsman_name varchar NULL,
+	craftsman_address varchar NULL,
+	craftsman_birthday date NULL,
+	craftsman_email varchar NULL,
+	product_id int8 NOT NULL,
+	product_name varchar NULL,
+	product_description varchar NULL,
+	product_type varchar NULL,
+	product_price int8 NULL,
+	customer_id int8 NOT NULL,
+	customer_name varchar NULL,
+	customer_address varchar NULL,
+	customer_birthday date NULL,
+	customer_email varchar NULL
+)
+;
+
+TRUNCATE TABLE dwh.tmp_sources --очистка "временной" таблицы
+;
+
+INSERT INTO dwh.tmp_sources --вставка данных из собранного запроса
+(
+order_id,
+order_created_date,
+order_completion_date,
+order_status,
+craftsman_id,
+craftsman_name,
+craftsman_address,
+craftsman_birthday,	
+craftsman_email,
+product_id,
+product_name,
+product_description,
+product_type,
+product_price,
+customer_id,
+customer_name,
+customer_address,
+customer_birthday,
+customer_email
+)
+
+--source1
+SELECT
+	cmw.order_id,
+	cmw.order_created_date,
+	cmw.order_completion_date,
+	cmw.order_status,
+	cmw.craftsman_id,
+	cmw.craftsman_name,
+	cmw.craftsman_address,
+	cmw.craftsman_birthday,	
+	cmw.craftsman_email,
+	cmw.product_id,
+	cmw.product_name,
+	cmw.product_description,
+	cmw.product_type,
+	cmw.product_price,
+	cmw.customer_id,
+	cmw.customer_name,
+	cmw.customer_address,
+	cmw.customer_birthday,
+	cmw.customer_email
+
+	FROM
+	source1.craft_market_wide cmw --широкая таблица первого источника
+
+	UNION ALL
+
+--source2	
+SELECT
+	cmoc.order_id,
+	cmoc.order_created_date,
+	cmoc.order_completion_date, 
+	cmoc.order_status,
+	ss.craftsman_id,
+	ss.craftsman_name,
+	ss.craftsman_address,
+	ss.craftsman_birthday,	
+	ss.craftsman_email,
+	ss.product_id,
+	ss.product_name,
+	ss.product_description,
+	ss.product_type,
+	ss.product_price,
+	cmoc.customer_id,
+	cmoc.customer_name,
+	cmoc.customer_address,
+	cmoc.customer_birthday,
+	cmoc.customer_email
+
+	FROM
+	source2.craft_market_orders_customers cmoc --ненормализованная таблица мастеров
+
+INNER JOIN source2.craft_market_masters_products ss --ненормализованная таблица мастеров
+ON cmoc.craftsman_id = ss.craftsman_id
+AND cmoc.product_id = ss.craftsman_id 
+    
+UNION ALL
+
+--source3
+SELECT
+	cmo.order_id,
+	cmo.order_created_date,
+	cmo.order_completion_date, 
+	cmo.order_status,
+	cmo.craftsman_id,
+	zz.craftsman_name,
+	zz.craftsman_address,
+	zz.craftsman_birthday,	
+	zz.craftsman_email,
+	cmo.product_id,
+	cmo.product_name,
+	cmo.product_description,
+	cmo.product_type,
+	cmo.product_price,
+	cc.customer_id,
+	cc.customer_name,
+	cc.customer_address,
+	cc.customer_birthday,
+	cc.customer_email
+
+	FROM
+	source3.craft_market_orders cmo --таблица заказов с товарами
+
+	INNER JOIN source3.craft_market_craftsmans zz --таблица мастеров
+	ON 	cmo.craftsman_id = zz.craftsman_id
+
+	INNER JOIN source3.craft_market_customers cc --таблица заказчиков
+	ON cmo.customer_id = cc.customer_id
+	
+	UNION ALL 
+	
+	--новый источник external_source
+	SELECT
+	cpo.order_id,
+	cpo.order_created_date,
+	cpo.order_completion_date, 
+	cpo.order_status,
+	cpo.craftsman_id,
+	cpo.craftsman_name,
+	cpo.craftsman_address,
+	cpo.craftsman_birthday,	
+	cpo.craftsman_email,
+	cpo.product_id,
+	cpo.product_name,
+	cpo.product_description,
+	cpo.product_type,
+	cpo.product_price,
+	c.customer_id,
+	c.customer_name,
+	c.customer_address,
+	c.customer_birthday,
+	c.customer_email
+
+FROM
+external_source.craft_products_orders cpo --данные по мастерам, товарам и заказам
+
+INNER JOIN external_source.customers c  --данные по заказчикам
+ON cpo.customer_id = c.customer_id
+	;
+
+--вывод информации
+SELECT
+ts.order_id,
+ts.order_created_date,
+ts.order_completion_date,
+ts.order_status,
+ts.craftsman_id,
+ts.craftsman_name,
+ts.craftsman_address,
+ts.craftsman_birthday,
+ts.craftsman_email,
+ts.product_id,
+ts.product_name,
+ts.product_description,
+ts.product_type,
+ts.product_price,
+ts.customer_id,
+ts.customer_name,
+ts.customer_address,
+ts.customer_birthday,
+ts.customer_email
+
+FROM
+dwh.tmp_sources ts
+;
+
+
+--Обновление существующих записей и добавление новых в dwh.d_craftsmans 
+MERGE INTO dwh.d_craftsman d
+
+USING 
+(
+SELECT
+DISTINCT craftsman_name,
+craftsman_address,
+craftsman_birthday,
+craftsman_email
+
+FROM
+dwh.tmp_sources --получение данных из таблицы, созданной на предыдущем этапе
+) t
+
+ON d.craftsman_name = t.craftsman_name
+AND d.craftsman_email = t.craftsman_email
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE 
+craftsman_address = t.craftsman_address, 
+craftsman_birthday = t.craftsman_birthday,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+craftsman_name,
+craftsman_address,
+craftsman_birthday,
+craftsman_email,
+load_dttm
+)
+
+VALUES --INSERT по следующим полям
+(
+t.craftsman_name,
+t.craftsman_address,
+t.craftsman_birthday,
+t.craftsman_email,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+--обновление существующих записей и добавление новых в dwh.d_products 
+MERGE INTO dwh.d_product d
+
+USING 
+(
+SELECT
+DISTINCT product_name,
+product_description,
+product_type,
+product_price
+
+FROM
+dwh.tmp_sources
+) t
+
+ON d.product_name = t.product_name
+AND d.product_description = t.product_description
+AND d.product_price = t.product_price
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE 
+product_type = t.product_type,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления, при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+product_name,
+product_description,
+product_type,
+product_price,
+load_dttm
+)
+
+VALUES --INSERT по следующим полям
+(
+t.product_name,
+t.product_description,
+t.product_type,
+t.product_price,
+current_timestamp --для сохранения историчности и корректного обновления, при INSERT проставляется текущая системная дата
+)
+;
+
+--обновление существующих записей и добавление новых в dwh.d_customer 
+MERGE INTO dwh.d_customer d
+
+USING 
+(
+SELECT
+DISTINCT customer_name,
+customer_address,
+customer_birthday,
+customer_email
+
+FROM
+dwh.tmp_sources
+) t
+
+ON d.customer_name = t.customer_name
+AND d.customer_email = t.customer_email
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE
+customer_address = t.customer_address, 
+customer_birthday = t.customer_birthday,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+customer_name,
+customer_address,
+customer_birthday,
+customer_email,
+load_dttm
+)
+
+VALUES 
+(
+t.customer_name,
+t.customer_address,
+t.customer_birthday,
+t.customer_email,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+--создание таблицы, в которой содержится инфорация по продукту/заказу/покупателю/исполнителю. Данная операця производится один раз. В дальнейшем этот этап пропускается и начинается с очистки
+DROP TABLE IF EXISTS dwh.tmp_sources_fact
+;
+
+CREATE TABLE dwh.tmp_sources_fact 
+(
+	product_id int8 NOT NULL,
+	craftsman_id int8 NOT NULL,
+	customer_id int8 NOT NULL,
+	order_created_date date NOT NULL,
+	order_completion_date date NULL,
+	order_status varchar NULL,
+load_dttm timestamptz NULL
+)
+;
+
+TRUNCATE TABLE dwh.tmp_sources_fact --очистка "временной" таблицы
+;
+
+INSERT INTO dwh.tmp_sources_fact --вставка данных из собранного запроса
+(
+product_id,
+craftsman_id,
+customer_id,
+order_created_date,
+order_completion_date,
+order_status,
+load_dttm
+)
+
+SELECT
+dp.product_id,
+		dc.craftsman_id,
+		dcust.customer_id,
+		src.order_created_date,
+		src.order_completion_date,
+		src.order_status,
+		current_timestamp AS load_dttm
+
+		FROM
+dwh.tmp_sources src
+
+INNER JOIN dwh.d_craftsman dc 
+ON dc.craftsman_name = src.craftsman_name
+AND dc.craftsman_email = src.craftsman_email
+
+INNER JOIN dwh.d_customer dcust 
+ON dcust.customer_name = src.customer_name
+AND dcust.customer_email = src.customer_email
+
+INNER JOIN dwh.d_product dp 
+ON dp.product_name = src.product_name
+AND dp.product_description = src.product_description
+AND dp.product_price = src.product_price
+;
+
+--вставка и/или обновление данных в таблице dwh.f_order
+MERGE INTO dwh.f_order f
+
+USING dwh.tmp_sources_fact t
+
+ON f.product_id = t.product_id
+AND f.craftsman_id = t.craftsman_id
+AND f.customer_id = t.customer_id
+AND f.order_created_date = t.order_created_date
+
+WHEN MATCHED THEN UPDATE SET --в случае совпадения, производить UPDATE
+order_completion_date = t.order_completion_date,
+order_status = t.order_status,
+load_dttm = current_timestamp --для сохранения историчности и корректного обновления при UPDATE проставляется текущая системная дата
+
+WHEN NOT MATCHED THEN INSERT --в случае отсутствия совпадения, производить INSERT
+(
+product_id,
+craftsman_id,
+customer_id,
+order_created_date,
+order_completion_date,
+order_status,
+load_dttm
+)
+
+VALUES 
+(
+t.product_id,
+t.craftsman_id,
+t.customer_id,
+t.order_created_date,
+t.order_completion_date,
+t.order_status,
+current_timestamp --для сохранения историчности и корректного обновления при INSERT проставляется текущая системная дата
+)
+;
+
+SELECT --вывод обновленных/новых строк
+ ff.order_id 
+,ff.product_id 
+,ff.craftsman_id 
+,ff.customer_id 
+,ff.order_created_date 
+,ff.order_completion_date 
+,ff.order_status 
+,ff.load_dttm 
+
+FROM
+dwh.f_order ff
+
